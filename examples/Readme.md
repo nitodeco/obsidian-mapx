@@ -18,10 +18,10 @@ Instead of getting the icon and color from the note, we can also get them from t
 
 ```js
 // Get the icon from the type
-list(type)[0].asFile().properties.icon
+list(type)[0].asFile().properties.icon;
 
 // Get the color from the type
-list(type)[0].asFile().properties.color
+list(type)[0].asFile().properties.color;
 ```
 
 You can see these properties by selecting **Properties** at the top of the base toolbar.

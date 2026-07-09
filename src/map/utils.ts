@@ -1,4 +1,4 @@
-import { Value, NumberValue, StringValue, ListValue } from 'obsidian';
+import { Value, NumberValue, StringValue, ListValue } from "obsidian";
 
 /**
  * Converts a Value to coordinate tuple [lat, lng]
@@ -17,7 +17,7 @@ export function coordinateFromValue(value: Value | null): [number, number] | nul
 	// Handle string values (e.g., "34.1395597,-118.3870991" or "34.1395597, -118.3870991")
 	else if (value instanceof StringValue) {
 		// Split by comma and handle various spacing
-		const parts = value.toString().trim().split(',');
+		const parts = value.toString().trim().split(",");
 		if (parts.length >= 2) {
 			lat = parseCoordinate(parts[0].trim());
 			lng = parseCoordinate(parts[1].trim());
@@ -50,11 +50,11 @@ export function parseCoordinate(value: unknown): number | null {
 		const num = parseFloat(value.toString());
 		return isNaN(num) ? null : num;
 	}
-	if (typeof value === 'string') {
+	if (typeof value === "string") {
 		const num = parseFloat(value);
 		return isNaN(num) ? null : num;
 	}
-	if (typeof value === 'number') {
+	if (typeof value === "number") {
 		return isNaN(value) ? null : value;
 	}
 	return null;
@@ -64,6 +64,5 @@ export function parseCoordinate(value: unknown): number | null {
  * Wrapper for Object.hasOwn which performs type narrowing
  */
 export function hasOwnProperty<K extends PropertyKey>(o: unknown, v: K): o is Record<K, unknown> {
-	return o != null && typeof o === 'object' && Object.hasOwn(o, v);
+	return o != null && typeof o === "object" && Object.hasOwn(o, v);
 }
-

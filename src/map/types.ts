@@ -1,4 +1,4 @@
-import { BasesEntry } from 'obsidian';
+import { BasesEntry } from "obsidian";
 
 export interface MapMarker {
 	entry: BasesEntry;
@@ -9,4 +9,3 @@ export interface MapMarkerProperties {
 	entryIndex: number;
 	icon: string; // Composite image key combining icon and color
 }
-

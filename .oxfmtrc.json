@@ -1,0 +1,7 @@
+{
+	"$schema": "./node_modules/oxfmt/configuration_schema.json",
+	"printWidth": 100,
+	"useTabs": true,
+	"singleQuote": false,
+	"ignorePatterns": ["main.js", "node_modules", "src/map/rtl-plugin-code.ts"]
+}

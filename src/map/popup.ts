@@ -1,5 +1,5 @@
-import { App, BasesEntry, BasesPropertyId, ListValue, Value } from 'obsidian';
-import { Popup, Map } from 'maplibre-gl';
+import { App, BasesEntry, BasesPropertyId, ListValue, Value } from "obsidian";
+import { Popup, Map } from "maplibre-gl";
 
 export class PopupManager {
 	private map: Map | null = null;
@@ -25,12 +25,22 @@ export class PopupManager {
 		coordinatesProp: BasesPropertyId | null,
 		markerIconProp: BasesPropertyId | null,
 		markerColorProp: BasesPropertyId | null,
-		getDisplayName: (prop: BasesPropertyId) => string
+		getDisplayName: (prop: BasesPropertyId) => string,
 	): void {
 		if (!this.map) return;
 
 		// Only show popup if there are properties to display
-		if (!properties || properties.length === 0 || !this.hasAnyPropertyValues(entry, properties, coordinatesProp, markerIconProp, markerColorProp)) {
+		if (
+			!properties ||
+			properties.length === 0 ||
+			!this.hasAnyPropertyValues(
+				entry,
+				properties,
+				coordinatesProp,
+				markerIconProp,
+				markerColorProp,
+			)
+		) {
 			return;
 		}
 
@@ -38,20 +48,20 @@ export class PopupManager {
 
 		// Create shared popup if it doesn't exist
 		if (!this.sharedPopup) {
-			const sharedPopup = this.sharedPopup = new Popup({
+			const sharedPopup = (this.sharedPopup = new Popup({
 				closeButton: false,
 				closeOnClick: false,
-				offset: 25
-			});
+				offset: 25,
+			}));
 
 			// Add hover handlers to the popup itself
-			sharedPopup.on('open', () => {
+			sharedPopup.on("open", () => {
 				const popupEl = sharedPopup.getElement();
 				if (popupEl) {
-					popupEl.addEventListener('mouseenter', () => {
+					popupEl.addEventListener("mouseenter", () => {
 						this.clearPopupHideTimeout();
 					});
-					popupEl.addEventListener('mouseleave', () => {
+					popupEl.addEventListener("mouseleave", () => {
 						this.hidePopup();
 					});
 				}
@@ -60,17 +70,21 @@ export class PopupManager {
 
 		// Update popup content and position
 		const [lat, lng] = coordinates;
-		const popupContent = this.createPopupContent(entry, properties, coordinatesProp, markerIconProp, markerColorProp, getDisplayName);
-		this.sharedPopup
-			.setDOMContent(popupContent)
-			.setLngLat([lng, lat])
-			.addTo(this.map);
+		const popupContent = this.createPopupContent(
+			entry,
+			properties,
+			coordinatesProp,
+			markerIconProp,
+			markerColorProp,
+			getDisplayName,
+		);
+		this.sharedPopup.setDOMContent(popupContent).setLngLat([lng, lat]).addTo(this.map);
 	}
 
 	hidePopup(): void {
 		this.clearPopupHideTimeout();
 
-		const win = this.popupHideTimeoutWin = this.containerEl.win;
+		const win = (this.popupHideTimeoutWin = this.containerEl.win);
 		this.popupHideTimeout = win.setTimeout(() => {
 			if (this.sharedPopup) {
 				this.sharedPopup.remove();
@@ -104,24 +118,24 @@ export class PopupManager {
 		coordinatesProp: BasesPropertyId | null,
 		markerIconProp: BasesPropertyId | null,
 		markerColorProp: BasesPropertyId | null,
-		getDisplayName: (prop: BasesPropertyId) => string
+		getDisplayName: (prop: BasesPropertyId) => string,
 	): HTMLElement {
-		const containerEl = createDiv('bases-map-popup');
+		const containerEl = createDiv("bases-map-popup");
 
 		// Get properties that have values
 		const propertiesSlice = properties.slice(0, 20); // Max 20 properties
 		const propertiesWithValues = [];
 
 		for (const prop of propertiesSlice) {
-			if (prop === coordinatesProp || prop === markerIconProp || prop === markerColorProp) continue; // Skip coordinates, marker icon, and marker color properties
+			if (prop === coordinatesProp || prop === markerIconProp || prop === markerColorProp)
+				continue; // Skip coordinates, marker icon, and marker color properties
 
 			try {
 				const value = entry.getValue(prop);
 				if (value && this.hasNonEmptyValue(value)) {
 					propertiesWithValues.push({ prop, value });
 				}
-			}
-			catch {
+			} catch {
 				// Skip properties that can't be rendered
 			}
 		}
@@ -129,12 +143,12 @@ export class PopupManager {
 		// Use first property as title (still acts as a link to the file)
 		if (propertiesWithValues.length > 0) {
 			const firstProperty = propertiesWithValues[0];
-			const titleEl = containerEl.createDiv('bases-map-popup-title');
+			const titleEl = containerEl.createDiv("bases-map-popup-title");
 
 			// Create a clickable link that opens the file
-			const titleLinkEl = titleEl.createEl('a', {
+			const titleLinkEl = titleEl.createEl("a", {
 				href: entry.file.path,
-				cls: 'internal-link'
+				cls: "internal-link",
 			});
 
 			// Render the first property value inside the link
@@ -143,12 +157,12 @@ export class PopupManager {
 			// Show remaining properties (excluding the first one used as title)
 			const remainingProperties = propertiesWithValues.slice(1);
 			if (remainingProperties.length > 0) {
-				const propContainerEl = containerEl.createDiv('bases-map-popup-properties');
+				const propContainerEl = containerEl.createDiv("bases-map-popup-properties");
 				for (const { prop, value } of remainingProperties) {
-					const propEl = propContainerEl.createDiv('bases-map-popup-property');
-					const labelEl = propEl.createDiv('bases-map-popup-property-label');
+					const propEl = propContainerEl.createDiv("bases-map-popup-property");
+					const labelEl = propEl.createDiv("bases-map-popup-property-label");
 					labelEl.textContent = getDisplayName(prop);
-					const valueEl = propEl.createDiv('bases-map-popup-property-value');
+					const valueEl = propEl.createDiv("bases-map-popup-property-value");
 					value.renderTo(valueEl, this.app.renderContext);
 				}
 			}
@@ -179,20 +193,20 @@ export class PopupManager {
 		properties: BasesPropertyId[],
 		coordinatesProp: BasesPropertyId | null,
 		markerIconProp: BasesPropertyId | null,
-		markerColorProp: BasesPropertyId | null
+		markerColorProp: BasesPropertyId | null,
 	): boolean {
 		const propertiesSlice = properties.slice(0, 20); // Max 20 properties
 
 		for (const prop of propertiesSlice) {
-			if (prop === coordinatesProp || prop === markerIconProp || prop === markerColorProp) continue; // Skip coordinates, marker icon, and marker color properties
+			if (prop === coordinatesProp || prop === markerIconProp || prop === markerColorProp)
+				continue; // Skip coordinates, marker icon, and marker color properties
 
 			try {
 				const value = entry.getValue(prop);
 				if (value && this.hasNonEmptyValue(value)) {
 					return true;
 				}
-			}
-			catch {
+			} catch {
 				// Skip properties that can't be rendered
 			}
 		}
@@ -200,4 +214,3 @@ export class PopupManager {
 		return false;
 	}
 }
-

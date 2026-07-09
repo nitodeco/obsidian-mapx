@@ -1,5 +1,5 @@
-import { setIcon, Menu } from 'obsidian';
-import { Map } from 'maplibre-gl';
+import { setIcon, Menu } from "obsidian";
+import { Map } from "maplibre-gl";
 
 export class BackgroundSwitcherControl {
 	private containerEl: HTMLElement;
@@ -10,29 +10,30 @@ export class BackgroundSwitcherControl {
 	constructor(
 		tileSets: Array<{ id: string; name: string; lightTiles: string; darkTiles: string }>,
 		currentTileSetId: string,
-		onSwitch: (tileSetId: string) => void
+		onSwitch: (tileSetId: string) => void,
 	) {
 		this.tileSets = tileSets;
 		this.currentTileSetId = currentTileSetId;
 		this.onSwitch = onSwitch;
-		this.containerEl = createDiv('maplibregl-ctrl maplibregl-ctrl-group canvas-control-group mod-raised');
+		this.containerEl = createDiv(
+			"maplibregl-ctrl maplibregl-ctrl-group canvas-control-group mod-raised",
+		);
 	}
 
-	onAdd(map: Map): HTMLElement {
-		const button = this.containerEl.createEl('div', {
-			cls: 'canvas-control-item',
-			attr: { 'aria-label': 'Switch background' }
+	onAdd(_map: Map): HTMLElement {
+		const button = this.containerEl.createEl("div", {
+			cls: "canvas-control-item",
+			attr: { "aria-label": "Switch background" },
 		});
-		setIcon(button, 'layers');
+		setIcon(button, "layers");
 
-		button.addEventListener('click', (evt) => {
+		button.addEventListener("click", (evt) => {
 			evt.stopPropagation();
 			const menu = new Menu();
 
 			for (const tileSet of this.tileSets) {
 				menu.addItem((item) => {
-					item
-						.setTitle(tileSet.name)
+					item.setTitle(tileSet.name)
 						.setChecked(this.currentTileSetId === tileSet.id)
 						.onClick(() => {
 							this.currentTileSetId = tileSet.id;
@@ -53,4 +54,3 @@ export class BackgroundSwitcherControl {
 		}
 	}
 }
-

@@ -114,7 +114,7 @@ body {
 
 	a {
 		color: var(--text-muted);
-        text-decoration: none;
+		text-decoration: none;
 	}
 	a:hover {
 		color: var(--text-muted);
@@ -160,12 +160,14 @@ body {
 }
 
 .maplibregl-canvas-container.maplibregl-touch-zoom-rotate.maplibregl-touch-drag-pan,
-.maplibregl-canvas-container.maplibregl-touch-zoom-rotate.maplibregl-touch-drag-pan .maplibregl-canvas {
+.maplibregl-canvas-container.maplibregl-touch-zoom-rotate.maplibregl-touch-drag-pan
+	.maplibregl-canvas {
 	touch-action: none;
 }
 
 .maplibregl-canvas-container.maplibregl-touch-drag-pan.maplibregl-cooperative-gestures,
-.maplibregl-canvas-container.maplibregl-touch-drag-pan.maplibregl-cooperative-gestures .maplibregl-canvas {
+.maplibregl-canvas-container.maplibregl-touch-drag-pan.maplibregl-cooperative-gestures
+	.maplibregl-canvas {
 	touch-action: pan-x pan-y;
 }
 
@@ -187,9 +189,9 @@ body {
 }
 
 .maplibregl-ctrl-top-right {
-	 top: var(--size-4-2);
-	 right: var(--size-4-2);
-	}
+	top: var(--size-4-2);
+	right: var(--size-4-2);
+}
 
 .maplibregl-ctrl-bottom-left {
 	bottom: var(--size-4-2);
@@ -197,8 +199,8 @@ body {
 }
 
 .maplibregl-ctrl-bottom-right {
-	 right: var(--size-4-2);
-	 bottom: var(--size-4-2);
+	right: var(--size-4-2);
+	bottom: var(--size-4-2);
 }
 
 .maplibregl-ctrl {
@@ -225,13 +227,19 @@ body {
 	border-radius: inherit;
 }
 
-.maplibregl-ctrl button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-waiting .maplibregl-ctrl-icon {
+.maplibregl-ctrl
+	button.maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-waiting
+	.maplibregl-ctrl-icon {
 	animation: maplibregl-spin 2s infinite linear;
 }
 
 @keyframes maplibregl-spin {
-	0% { transform: rotate(0deg); }
-	100% { transform: rotate(360deg); }
+	0% {
+		transform: rotate(0deg);
+	}
+	100% {
+		transform: rotate(360deg);
+	}
 }
 
 a.maplibregl-ctrl-logo {

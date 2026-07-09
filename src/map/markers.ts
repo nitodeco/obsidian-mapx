@@ -1,8 +1,8 @@
-import { App, BasesEntry, BasesPropertyId, Keymap, Menu, setIcon } from 'obsidian';
-import { Map, LngLatBounds, GeoJSONSource, MapLayerMouseEvent } from 'maplibre-gl';
-import { MapMarker, MapMarkerProperties } from './types';
-import { coordinateFromValue } from './utils';
-import { PopupManager } from './popup';
+import { App, BasesEntry, BasesPropertyId, Keymap, Menu, setIcon } from "obsidian";
+import { Map, LngLatBounds, GeoJSONSource, MapLayerMouseEvent } from "maplibre-gl";
+import { MapMarker, MapMarkerProperties } from "./types";
+import { coordinateFromValue } from "./utils";
+import { PopupManager } from "./popup";
 
 export class MarkerManager {
 	private map: Map | null = null;
@@ -24,7 +24,7 @@ export class MarkerManager {
 		onOpenFile: (path: string, newLeaf: boolean) => void,
 		getData: () => any,
 		getMapConfig: () => any,
-		getDisplayName: (prop: BasesPropertyId) => string
+		getDisplayName: (prop: BasesPropertyId) => string,
 	) {
 		this.app = app;
 		this.mapEl = mapEl;
@@ -66,8 +66,7 @@ export class MarkerManager {
 			try {
 				const value = entry.getValue(mapConfig.coordinatesProp);
 				coordinates = coordinateFromValue(value);
-			}
-			catch (error) {
+			} catch (error) {
 				console.error(`Error extracting coordinates for ${entry.file.name}:`, error);
 			}
 
@@ -82,8 +81,8 @@ export class MarkerManager {
 		this.markers = validMarkers;
 
 		// Calculate bounds for all markers
-		const bounds = this.bounds = new LngLatBounds();
-		validMarkers.forEach(markerData => {
+		const bounds = (this.bounds = new LngLatBounds());
+		validMarkers.forEach((markerData) => {
 			const [lat, lng] = markerData.coordinates;
 			bounds.extend([lng, lat]);
 		});
@@ -93,18 +92,18 @@ export class MarkerManager {
 		const features = this.createGeoJSONFeatures(validMarkers);
 
 		// Update or create the markers source
-		const source = this.map.getSource('markers') as GeoJSONSource | undefined;
+		const source = this.map.getSource("markers") as GeoJSONSource | undefined;
 		if (source) {
 			source.setData({
-				type: 'FeatureCollection',
+				type: "FeatureCollection",
 				features,
 			});
 		} else {
 			// Add source if it doesn't exist
-			this.map.addSource('markers', {
-				type: 'geojson',
+			this.map.addSource("markers", {
+				type: "geojson",
 				data: {
-					type: 'FeatureCollection',
+					type: "FeatureCollection",
 					features,
 				},
 			});
@@ -127,15 +126,22 @@ export class MarkerManager {
 			const iconString = value.toString().trim();
 
 			// Handle null/empty/invalid cases - return null to show default marker
-			if (!iconString || iconString.length === 0 || iconString === 'null' || iconString === 'undefined') {
+			if (
+				!iconString ||
+				iconString.length === 0 ||
+				iconString === "null" ||
+				iconString === "undefined"
+			) {
 				return null;
 			}
 
 			return iconString;
-		}
-		catch (error) {
+		} catch (error) {
 			// Log as warning instead of error - this is not critical
-			console.warn(`Could not extract icon for ${entry.file.name}. The marker icon property should be a simple text value (e.g., "map", "star").`, error);
+			console.warn(
+				`Could not extract icon for ${entry.file.name}. The marker icon property should be a simple text value (e.g., "map", "star").`,
+				error,
+			);
 			return null;
 		}
 	}
@@ -154,10 +160,11 @@ export class MarkerManager {
 			// Return the color as-is, let CSS handle validation
 			// Supports: hex (#ff0000), rgb/rgba, hsl/hsla, CSS color names, and CSS custom properties (var(--color-name))
 			return colorString;
-		}
-		catch (error) {
+		} catch {
 			// Log as warning instead of error - this is not critical
-			console.warn(`Could not extract color for ${entry.file.name}. The marker color property should be a simple text value (e.g., "#ff0000", "red", "var(--color-accent)").`);
+			console.warn(
+				`Could not extract color for ${entry.file.name}. The marker color property should be a simple text value (e.g., "#ff0000", "red", "var(--color-accent)").`,
+			);
 			return null;
 		}
 	}
@@ -171,7 +178,8 @@ export class MarkerManager {
 
 		for (const markerData of markers) {
 			const icon = this.getCustomIcon(markerData.entry);
-			const color = this.getCustomColor(markerData.entry) || 'var(--bases-map-marker-background)';
+			const color =
+				this.getCustomColor(markerData.entry) || "var(--bases-map-marker-background)";
 			const compositeKey = this.getCompositeImageKey(icon, color);
 
 			if (!this.loadedIcons.has(compositeKey)) {
@@ -203,14 +211,14 @@ export class MarkerManager {
 	}
 
 	private getCompositeImageKey(icon: string | null, color: string): string {
-		return `marker-${icon || 'dot'}-${color.replace(/[^a-zA-Z0-9]/g, '')}`;
+		return `marker-${icon || "dot"}-${color.replace(/[^a-zA-Z0-9]/g, "")}`;
 	}
 
 	private resolveColor(color: string): string {
 		// Create a temporary element to resolve CSS variables
-		const tempEl = document.createElement('div');
+		const tempEl = document.createElement("div");
 		tempEl.style.color = color;
-		tempEl.style.display = 'none';
+		tempEl.style.display = "none";
 		document.body.appendChild(tempEl);
 
 		// Get the computed color value
@@ -222,26 +230,29 @@ export class MarkerManager {
 		return computedColor;
 	}
 
-	private async createCompositeMarkerImage(icon: string | null, color: string): Promise<HTMLImageElement> {
+	private async createCompositeMarkerImage(
+		icon: string | null,
+		color: string,
+	): Promise<HTMLImageElement> {
 		// Resolve CSS variables to actual color values
 		const resolvedColor = this.resolveColor(color);
-		const resolvedIconColor = this.resolveColor('var(--bases-map-marker-icon-color)');
+		const resolvedIconColor = this.resolveColor("var(--bases-map-marker-icon-color)");
 
 		// Create a high-resolution canvas for crisp rendering on retina displays
 		const scale = 4; // 4x resolution for crisp display
 		const size = 48 * scale; // High-res canvas
-		const canvas = document.createElement('canvas');
+		const canvas = document.createElement("canvas");
 		canvas.width = size;
 		canvas.height = size;
-		const ctx = canvas.getContext('2d');
+		const ctx = canvas.getContext("2d");
 
 		if (!ctx) {
-			throw new Error('Failed to get canvas context');
+			throw new Error("Failed to get canvas context");
 		}
 
 		// Enable high-quality rendering
 		ctx.imageSmoothingEnabled = true;
-		ctx.imageSmoothingQuality = 'high';
+		ctx.imageSmoothingQuality = "high";
 
 		// Draw the circle background (scaled up)
 		const centerX = size / 2;
@@ -253,7 +264,7 @@ export class MarkerManager {
 		ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
 		ctx.fill();
 
-		ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+		ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
 		ctx.lineWidth = 1 * scale;
 		ctx.stroke();
 
@@ -262,17 +273,17 @@ export class MarkerManager {
 			// Load and draw custom icon
 			const iconDiv = createDiv();
 			setIcon(iconDiv, icon);
-			const svgEl = iconDiv.querySelector('svg');
+			const svgEl = iconDiv.querySelector("svg");
 
 			if (svgEl) {
-				svgEl.setAttribute('stroke', 'currentColor');
-				svgEl.setAttribute('fill', 'none');
-				svgEl.setAttribute('stroke-width', '2');
+				svgEl.setAttribute("stroke", "currentColor");
+				svgEl.setAttribute("fill", "none");
+				svgEl.setAttribute("stroke-width", "2");
 				svgEl.style.color = resolvedIconColor;
 
 				const svgString = new XMLSerializer().serializeToString(svgEl);
 				const iconImg = new Image();
-				iconImg.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
+				iconImg.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgString);
 
 				await new Promise<void>((resolve, reject) => {
 					iconImg.onload = () => {
@@ -283,7 +294,7 @@ export class MarkerManager {
 							centerX - iconSize / 2,
 							centerY - iconSize / 2,
 							iconSize,
-							iconSize
+							iconSize,
 						);
 						resolve();
 					};
@@ -303,7 +314,7 @@ export class MarkerManager {
 		return new Promise((resolve, reject) => {
 			canvas.toBlob((blob) => {
 				if (!blob) {
-					reject(new Error('Failed to create image blob'));
+					reject(new Error("Failed to create image blob"));
 					return;
 				}
 
@@ -319,7 +330,8 @@ export class MarkerManager {
 		return markers.map((markerData, index) => {
 			const [lat, lng] = markerData.coordinates;
 			const icon = this.getCustomIcon(markerData.entry);
-			const color = this.getCustomColor(markerData.entry) || 'var(--bases-map-marker-background)';
+			const color =
+				this.getCustomColor(markerData.entry) || "var(--bases-map-marker-background)";
 			const compositeKey = this.getCompositeImageKey(icon, color);
 
 			const properties: MapMarkerProperties = {
@@ -328,9 +340,9 @@ export class MarkerManager {
 			};
 
 			return {
-				type: 'Feature',
+				type: "Feature",
 				geometry: {
-					type: 'Point',
+					type: "Point",
 					coordinates: [lng, lat],
 				},
 				properties,
@@ -343,23 +355,27 @@ export class MarkerManager {
 
 		// Add a single symbol layer for composite marker images
 		this.map.addLayer({
-			id: 'marker-pins',
-			type: 'symbol',
-			source: 'markers',
+			id: "marker-pins",
+			type: "symbol",
+			source: "markers",
 			layout: {
-				'icon-image': ['get', 'icon'],
-				'icon-size': [
-					'interpolate',
-					['linear'],
-					['zoom'],
-					0, 0.12,   // Very small
-					4, 0.18,
-					14, 0.22,  // Normal size
-					18, 0.24
+				"icon-image": ["get", "icon"],
+				"icon-size": [
+					"interpolate",
+					["linear"],
+					["zoom"],
+					0,
+					0.12, // Very small
+					4,
+					0.18,
+					14,
+					0.22, // Normal size
+					18,
+					0.24,
 				],
-				'icon-allow-overlap': true,
-				'icon-ignore-placement': true,
-				'icon-padding': 0,
+				"icon-allow-overlap": true,
+				"icon-ignore-placement": true,
+				"icon-padding": 0,
 			},
 		});
 	}
@@ -368,16 +384,16 @@ export class MarkerManager {
 		if (!this.map) return;
 
 		// Change cursor on hover
-		this.map.on('mouseenter', 'marker-pins', () => {
-			if (this.map) this.map.getCanvas().style.cursor = 'pointer';
+		this.map.on("mouseenter", "marker-pins", () => {
+			if (this.map) this.map.getCanvas().style.cursor = "pointer";
 		});
 
-		this.map.on('mouseleave', 'marker-pins', () => {
-			if (this.map) this.map.getCanvas().style.cursor = '';
+		this.map.on("mouseleave", "marker-pins", () => {
+			if (this.map) this.map.getCanvas().style.cursor = "";
 		});
 
 		// Handle hover to show popup
-		this.map.on('mouseenter', 'marker-pins', (e: MapLayerMouseEvent) => {
+		this.map.on("mouseenter", "marker-pins", (e: MapLayerMouseEvent) => {
 			if (!e.features || e.features.length === 0) return;
 			const feature = e.features[0];
 			const entryIndex = feature.properties?.entryIndex;
@@ -393,31 +409,33 @@ export class MarkerManager {
 						mapConfig.coordinatesProp,
 						mapConfig.markerIconProp,
 						mapConfig.markerColorProp,
-						this.getDisplayName
+						this.getDisplayName,
 					);
 				}
 			}
 		});
 
 		// Handle mouseleave to hide popup
-		this.map.on('mouseleave', 'marker-pins', () => {
+		this.map.on("mouseleave", "marker-pins", () => {
 			this.popupManager.hidePopup();
 		});
 
 		// Handle click to open file
-		this.map.on('click', 'marker-pins', (e: MapLayerMouseEvent) => {
+		this.map.on("click", "marker-pins", (e: MapLayerMouseEvent) => {
 			if (!e.features || e.features.length === 0) return;
 			const feature = e.features[0];
 			const entryIndex = feature.properties?.entryIndex;
 			if (entryIndex !== undefined && this.markers[entryIndex]) {
 				const markerData = this.markers[entryIndex];
-				const newLeaf = e.originalEvent ? Boolean(Keymap.isModEvent(e.originalEvent)) : false;
+				const newLeaf = e.originalEvent
+					? Boolean(Keymap.isModEvent(e.originalEvent))
+					: false;
 				this.onOpenFile(markerData.entry.file.path, newLeaf);
 			}
 		});
 
 		// Handle right-click context menu
-		this.map.on('contextmenu', 'marker-pins', (e: MapLayerMouseEvent) => {
+		this.map.on("contextmenu", "marker-pins", (e: MapLayerMouseEvent) => {
 			e.preventDefault();
 			if (!e.features || e.features.length === 0) return;
 
@@ -429,37 +447,41 @@ export class MarkerManager {
 				const file = markerData.entry.file;
 
 				const menu = Menu.forEvent(e.originalEvent);
-				this.app.workspace.handleLinkContextMenu(menu, file.path, '');
+				this.app.workspace.handleLinkContextMenu(menu, file.path, "");
 
 				// Add copy coordinates option
-				menu.addItem(item => item
-					.setSection('action')
-					.setTitle('Copy coordinates')
-					.setIcon('map-pin')
-					.onClick(() => {
-						const coordString = `${lat}, ${lng}`;
-						void navigator.clipboard.writeText(coordString);
-					}));
+				menu.addItem((item) =>
+					item
+						.setSection("action")
+						.setTitle("Copy coordinates")
+						.setIcon("map-pin")
+						.onClick(() => {
+							const coordString = `${lat}, ${lng}`;
+							void navigator.clipboard.writeText(coordString);
+						}),
+				);
 
-				menu.addItem(item => item
-					.setSection('danger')
-					.setTitle('Delete file')
-					.setIcon('trash-2')
-					.setWarning(true)
-					.onClick(() => this.app.fileManager.promptForDeletion(file)));
+				menu.addItem((item) =>
+					item
+						.setSection("danger")
+						.setTitle("Delete file")
+						.setIcon("trash-2")
+						.setWarning(true)
+						.onClick(() => this.app.fileManager.promptForDeletion(file)),
+				);
 			}
 		});
 
 		// Handle hover for link preview - similar to cards view
-		this.map.on('mouseover', 'marker-pins', (e: MapLayerMouseEvent) => {
+		this.map.on("mouseover", "marker-pins", (e: MapLayerMouseEvent) => {
 			if (!e.features || e.features.length === 0) return;
 			const feature = e.features[0];
 			const entryIndex = feature.properties?.entryIndex;
 			if (entryIndex !== undefined && this.markers[entryIndex]) {
 				const markerData = this.markers[entryIndex];
-				this.app.workspace.trigger('hover-link', {
+				this.app.workspace.trigger("hover-link", {
 					event: e.originalEvent,
-					source: 'bases',
+					source: "bases",
 					hoverParent: this.app.renderContext,
 					targetEl: this.mapEl,
 					linktext: markerData.entry.file.path,
@@ -468,4 +490,3 @@ export class MarkerManager {
 		});
 	}
 }
-
