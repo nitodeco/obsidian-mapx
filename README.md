@@ -43,7 +43,7 @@ pnpm install
 Copy `main.js`, `manifest.json`, and `styles.css` into your vault:
 
 ```
-<Vault>/.obsidian/plugins/maps/
+<Vault>/.obsidian/plugins/mapx/
 ```
 
 Reload Obsidian and enable the plugin under **Settings → Community plugins**.
