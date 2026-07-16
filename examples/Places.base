@@ -1,9 +1,6 @@
 filters:
   and:
     - categories.containsAny(link("Places"))
-formulas:
-  Type icon: list(type)[0].asFile().properties.icon
-  Type color: list(type)[0].asFile().properties.color
 properties:
   file.name:
     displayName: Place
@@ -13,8 +10,6 @@ properties:
     displayName: Architect
   note.address:
     displayName: Address
-  formula.Type color:
-    displayName: Type color
 views:
   - type: map
     name: Map
@@ -26,39 +21,3 @@ views:
     markerIcon: note.icon
     markerColor: note.color
     defaultZoom: 12
-  - type: map
-    name: Type-based markers
-    order:
-      - file.name
-      - architect
-      - rating
-      - formula.Type color
-      - formula.Type icon
-    coordinates: note.coordinates
-    markerIcon: formula.Type icon
-    markerColor: formula.Type color
-    defaultZoom: 12
-  - type: map
-    name: Type map
-    filters:
-      and:
-        - list(type).contains(this)
-    order:
-      - file.name
-      - address
-      - architect
-    coordinates: note.coordinates
-    markerIcon: formula.Type icon
-    markerColor: formula.Type color
-  - type: table
-    name: Type table
-    filters:
-      and:
-        - list(type).contains(this)
-    order:
-      - file.name
-      - rating
-      - address
-    coordinates: note.coordinates
-    markerIcon: formula.Type icon
-    markerColor: formula.Type color

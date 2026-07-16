@@ -8,12 +8,52 @@ export interface TileSet {
 	darkTiles: string;
 }
 
+export type MapTheme = "system" | "light" | "dark";
+
+export interface MapTextLabelSettings {
+	countries: boolean;
+	regions: boolean;
+	cities: boolean;
+	bodiesOfWater: boolean;
+	roads: boolean;
+}
+
+export interface MapLayerSettings {
+	countryBorders: boolean;
+	stateBorders: boolean;
+	countyBorders: boolean;
+	roads: boolean;
+	capitalMarkers: boolean;
+}
+
 export interface MapSettings {
 	tileSets: TileSet[];
+	mapTheme: MapTheme;
+	showTextLabels: boolean;
+	showMarkerLabels: boolean;
+	textLabels: MapTextLabelSettings;
+	mapLayers: MapLayerSettings;
 }
 
 export const DEFAULT_SETTINGS: MapSettings = {
 	tileSets: [],
+	mapTheme: "system",
+	showTextLabels: false,
+	showMarkerLabels: false,
+	textLabels: {
+		countries: true,
+		regions: true,
+		cities: true,
+		bodiesOfWater: true,
+		roads: true,
+	},
+	mapLayers: {
+		countryBorders: true,
+		stateBorders: true,
+		countyBorders: true,
+		roads: true,
+		capitalMarkers: true,
+	},
 };
 
 class TileSetModal extends Modal {
@@ -109,6 +149,75 @@ export class MapSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
+			.setName("Map theme")
+			.setDesc("Choose which map tiles to use. System follows your Obsidian theme.")
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption("system", "System")
+					.addOption("light", "Light")
+					.addOption("dark", "Dark")
+					.setValue(this.plugin.settings.mapTheme)
+					.onChange(async (value) => {
+						this.plugin.settings.mapTheme = value as MapTheme;
+						await this.plugin.saveSettings();
+						this.plugin.notifySettingsChanged();
+					}),
+			);
+
+		new Setting(containerEl).setHeading().setName("Text labels");
+
+		new Setting(containerEl)
+			.setName("Show text labels")
+			.setDesc("Show place names from the map background.")
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.showTextLabels).onChange(async (value) => {
+					this.plugin.settings.showTextLabels = value;
+					await this.plugin.saveSettings();
+					this.plugin.notifySettingsChanged();
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName("Show marker labels")
+			.setDesc("Show note names next to marked places.")
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.showMarkerLabels).onChange(async (value) => {
+					this.plugin.settings.showMarkerLabels = value;
+					await this.plugin.saveSettings();
+					this.plugin.notifySettingsChanged();
+				}),
+			);
+
+		this.addTextLabelToggle(
+			containerEl,
+			"Countries",
+			"Country and continent names.",
+			"countries",
+		);
+		this.addTextLabelToggle(containerEl, "Regions", "State and province names.", "regions");
+		this.addTextLabelToggle(containerEl, "Cities", "City, town, and village names.", "cities");
+		this.addTextLabelToggle(
+			containerEl,
+			"Bodies of water",
+			"Sea, lake, and river names.",
+			"bodiesOfWater",
+		);
+		this.addTextLabelToggle(containerEl, "Roads", "Street names and route shields.", "roads");
+
+		new Setting(containerEl).setHeading().setName("Map layers");
+
+		this.addMapLayerToggle(containerEl, "Country borders", "", "countryBorders");
+		this.addMapLayerToggle(containerEl, "State borders", "", "stateBorders");
+		this.addMapLayerToggle(containerEl, "County borders", "", "countyBorders");
+		this.addMapLayerToggle(containerEl, "Roads", "Streets, highways, and paths.", "roads");
+		this.addMapLayerToggle(
+			containerEl,
+			"Capital markers",
+			"Dot markers on cities, towns, and capitals.",
+			"capitalMarkers",
+		);
+
+		new Setting(containerEl)
 			.setHeading()
 			.setName("Backgrounds")
 			.addButton((button) =>
@@ -119,6 +228,7 @@ export class MapSettingTab extends PluginSettingTab {
 						new TileSetModal(this.app, null, async (tileSet) => {
 							this.plugin.settings.tileSets.push(tileSet);
 							await this.plugin.saveSettings();
+							this.plugin.notifySettingsChanged();
 							this.display();
 						}).open();
 					}),
@@ -139,6 +249,44 @@ export class MapSettingTab extends PluginSettingTab {
 		}
 	}
 
+	private addTextLabelToggle(
+		containerEl: HTMLElement,
+		name: string,
+		description: string,
+		key: keyof MapTextLabelSettings,
+	): void {
+		const setting = new Setting(containerEl).setName(name).addToggle((toggle) =>
+			toggle.setValue(this.plugin.settings.textLabels[key]).onChange(async (value) => {
+				this.plugin.settings.textLabels[key] = value;
+				await this.plugin.saveSettings();
+				this.plugin.notifySettingsChanged();
+			}),
+		);
+
+		if (description) {
+			setting.setDesc(description);
+		}
+	}
+
+	private addMapLayerToggle(
+		containerEl: HTMLElement,
+		name: string,
+		description: string,
+		key: keyof MapLayerSettings,
+	): void {
+		const setting = new Setting(containerEl).setName(name).addToggle((toggle) =>
+			toggle.setValue(this.plugin.settings.mapLayers[key]).onChange(async (value) => {
+				this.plugin.settings.mapLayers[key] = value;
+				await this.plugin.saveSettings();
+				this.plugin.notifySettingsChanged();
+			}),
+		);
+
+		if (description) {
+			setting.setDesc(description);
+		}
+	}
+
 	private displayTileSetItem(containerEl: HTMLElement, tileSet: TileSet, index: number): void {
 		const itemEl = containerEl.createDiv("mobile-option-setting-item");
 
@@ -154,6 +302,7 @@ export class MapSettingTab extends PluginSettingTab {
 				new TileSetModal(this.app, { ...tileSet }, async (updatedTileSet) => {
 					this.plugin.settings.tileSets[index] = updatedTileSet;
 					await this.plugin.saveSettings();
+					this.plugin.notifySettingsChanged();
 					this.display();
 				}).open();
 			});
@@ -165,6 +314,7 @@ export class MapSettingTab extends PluginSettingTab {
 			el.addEventListener("click", async () => {
 				this.plugin.settings.tileSets.splice(index, 1);
 				await this.plugin.saveSettings();
+				this.plugin.notifySettingsChanged();
 				this.display();
 			});
 		});

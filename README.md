@@ -40,7 +40,15 @@ pnpm install
 
 ### Manual testing
 
-Copy `main.js`, `manifest.json`, and `styles.css` into your vault:
+Symlink this repo into your vault so builds are picked up automatically:
+
+```bash
+pnpm run link
+```
+
+That links `<Vault>/.obsidian/plugins/mapx/` to this repository. Then run `pnpm run dev` and reload the plugin in Obsidian after changes.
+
+If you prefer not to symlink, copy `main.js`, `manifest.json`, and `styles.css` into:
 
 ```
 <Vault>/.obsidian/plugins/mapx/

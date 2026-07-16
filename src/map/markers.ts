@@ -1,8 +1,16 @@
-import { App, BasesEntry, BasesPropertyId, Keymap, Menu, setIcon } from "obsidian";
+import { App, BasesEntry, BasesPropertyId, Menu, setIcon } from "obsidian";
 import { Map, LngLatBounds, GeoJSONSource, MapLayerMouseEvent } from "maplibre-gl";
 import { MapMarker, MapMarkerProperties } from "./types";
 import { coordinateFromValue } from "./utils";
 import { PopupManager } from "./popup";
+import { MarkerLabelOverlay } from "./label-overlay";
+
+const MARKER_PIN_LAYER_ID = "marker-pins";
+const MARKER_CLICK_ZOOM = 14;
+const MARKER_CLICK_MIN_DISTANCE_IN_PX = 64;
+const MARKER_FLY_SPEED = 1.35;
+const MARKER_FLY_CURVE = 1.42;
+const MARKER_FLY_EXPONENT = 10;
 
 export class MarkerManager {
 	private map: Map | null = null;
@@ -12,16 +20,19 @@ export class MarkerManager {
 	private bounds: LngLatBounds | null = null;
 	private loadedIcons: Set<string> = new Set();
 	private popupManager: PopupManager;
-	private onOpenFile: (path: string, newLeaf: boolean) => void;
+	private labelOverlay: MarkerLabelOverlay;
 	private getData: () => any;
 	private getMapConfig: () => any;
 	private getDisplayName: (prop: BasesPropertyId) => string;
+	private showTextLabels = false;
+	private markerInteractionsInitialized = false;
+	private isRestoringMarkerLayers = false;
 
 	constructor(
 		app: App,
+		overlayContainerEl: HTMLElement,
 		mapEl: HTMLElement,
 		popupManager: PopupManager,
-		onOpenFile: (path: string, newLeaf: boolean) => void,
 		getData: () => any,
 		getMapConfig: () => any,
 		getDisplayName: (prop: BasesPropertyId) => string,
@@ -29,14 +40,50 @@ export class MarkerManager {
 		this.app = app;
 		this.mapEl = mapEl;
 		this.popupManager = popupManager;
-		this.onOpenFile = onOpenFile;
+		this.labelOverlay = new MarkerLabelOverlay(overlayContainerEl);
 		this.getData = getData;
 		this.getMapConfig = getMapConfig;
 		this.getDisplayName = getDisplayName;
 	}
 
 	setMap(map: Map | null): void {
+		if (this.map) {
+			this.map.off("styledata", this.restoreMarkerLayersIfMissing);
+			this.map.off("idle", this.restoreMarkerLayersIfMissing);
+		}
+
 		this.map = map;
+		this.labelOverlay.setMap(map);
+
+		if (map) {
+			map.on("styledata", this.restoreMarkerLayersIfMissing);
+			map.on("idle", this.restoreMarkerLayersIfMissing);
+		} else {
+			this.markerInteractionsInitialized = false;
+		}
+	}
+
+	private restoreMarkerLayersIfMissing = (): void => {
+		if (!this.map || this.isRestoringMarkerLayers) {
+			return;
+		}
+
+		if (this.markers.length === 0 || this.map.getSource("markers")) {
+			return;
+		}
+
+		this.isRestoringMarkerLayers = true;
+		void this.updateMarkers(this.getData())
+			.catch(() => {})
+			.finally(() => {
+				this.isRestoringMarkerLayers = false;
+			});
+	};
+
+	setShowTextLabels(showTextLabels: boolean): void {
+		this.showTextLabels = showTextLabels;
+		this.labelOverlay.setShowLabels(showTextLabels);
+		this.labelOverlay.update(this.markers);
 	}
 
 	getMarkers(): MapMarker[] {
@@ -57,7 +104,6 @@ export class MarkerManager {
 			return;
 		}
 
-		// Collect valid marker data
 		const validMarkers: MapMarker[] = [];
 		for (const entry of data.data) {
 			if (!entry) continue;
@@ -80,26 +126,28 @@ export class MarkerManager {
 
 		this.markers = validMarkers;
 
-		// Calculate bounds for all markers
 		const bounds = (this.bounds = new LngLatBounds());
 		validMarkers.forEach((markerData) => {
-			const [lat, lng] = markerData.coordinates;
-			bounds.extend([lng, lat]);
+			const [latitude, longitude] = markerData.coordinates;
+			bounds.extend([longitude, latitude]);
 		});
 
-		// Load all custom icons and create GeoJSON features
+		this.labelOverlay.update(this.markers);
+
+		const source = this.map.getSource("markers") as GeoJSONSource | undefined;
+		if (!source && !this.isStyleReadyForSources()) {
+			return;
+		}
+
 		await this.loadCustomIcons(validMarkers);
 		const features = this.createGeoJSONFeatures(validMarkers);
 
-		// Update or create the markers source
-		const source = this.map.getSource("markers") as GeoJSONSource | undefined;
 		if (source) {
 			source.setData({
 				type: "FeatureCollection",
 				features,
 			});
 		} else {
-			// Add source if it doesn't exist
 			this.map.addSource("markers", {
 				type: "geojson",
 				data: {
@@ -108,10 +156,21 @@ export class MarkerManager {
 				},
 			});
 
-			// Add layers for markers (icon + pin)
-			this.addMarkerLayers();
-			this.setupMarkerInteractions();
+			this.addPinLayer();
+			if (!this.markerInteractionsInitialized) {
+				this.setupMarkerInteractions();
+				this.markerInteractionsInitialized = true;
+			}
 		}
+	}
+
+	private isStyleReadyForSources(): boolean {
+		if (!this.map) {
+			return false;
+		}
+
+		const styleInternals = this.map.style as unknown as { _loaded?: boolean };
+		return styleInternals?._loaded === true;
 	}
 
 	private getCustomIcon(entry: BasesEntry): string | null {
@@ -122,10 +181,8 @@ export class MarkerManager {
 			const value = entry.getValue(mapConfig.markerIconProp);
 			if (!value || !value.isTruthy()) return null;
 
-			// Extract the icon name from the value
 			const iconString = value.toString().trim();
 
-			// Handle null/empty/invalid cases - return null to show default marker
 			if (
 				!iconString ||
 				iconString.length === 0 ||
@@ -137,7 +194,6 @@ export class MarkerManager {
 
 			return iconString;
 		} catch (error) {
-			// Log as warning instead of error - this is not critical
 			console.warn(
 				`Could not extract icon for ${entry.file.name}. The marker icon property should be a simple text value (e.g., "map", "star").`,
 				error,
@@ -154,14 +210,9 @@ export class MarkerManager {
 			const value = entry.getValue(mapConfig.markerColorProp);
 			if (!value || !value.isTruthy()) return null;
 
-			// Extract the color value from the property
 			const colorString = value.toString().trim();
-
-			// Return the color as-is, let CSS handle validation
-			// Supports: hex (#ff0000), rgb/rgba, hsl/hsla, CSS color names, and CSS custom properties (var(--color-name))
 			return colorString;
 		} catch {
-			// Log as warning instead of error - this is not critical
 			console.warn(
 				`Could not extract color for ${entry.file.name}. The marker color property should be a simple text value (e.g., "#ff0000", "red", "var(--color-accent)").`,
 			);
@@ -172,7 +223,6 @@ export class MarkerManager {
 	private async loadCustomIcons(markers: MapMarker[]): Promise<void> {
 		if (!this.map) return;
 
-		// Collect all unique icon+color combinations that need to be loaded
 		const compositeImagesToLoad: Array<{ icon: string | null; color: string }> = [];
 		const uniqueKeys = new Set<string>();
 
@@ -190,18 +240,16 @@ export class MarkerManager {
 			}
 		}
 
-		// Create composite images for each unique icon+color combination
 		for (const { icon, color } of compositeImagesToLoad) {
 			try {
 				const compositeKey = this.getCompositeImageKey(icon, color);
-				const img = await this.createCompositeMarkerImage(icon, color);
+				const image = await this.createCompositeMarkerImage(icon, color);
 
 				if (this.map) {
-					// Force update of the image on theme change
 					if (this.map.hasImage(compositeKey)) {
 						this.map.removeImage(compositeKey);
 					}
-					this.map.addImage(compositeKey, img);
+					this.map.addImage(compositeKey, image);
 					this.loadedIcons.add(compositeKey);
 				}
 			} catch (error) {
@@ -215,17 +263,13 @@ export class MarkerManager {
 	}
 
 	private resolveColor(color: string): string {
-		// Create a temporary element to resolve CSS variables
-		const tempEl = document.createElement("div");
-		tempEl.style.color = color;
-		tempEl.style.display = "none";
-		document.body.appendChild(tempEl);
+		const tempElement = document.createElement("div");
+		tempElement.style.color = color;
+		tempElement.style.display = "none";
+		document.body.appendChild(tempElement);
 
-		// Get the computed color value
-		const computedColor = getComputedStyle(tempEl).color;
-
-		// Clean up
-		tempEl.remove();
+		const computedColor = getComputedStyle(tempElement).color;
+		tempElement.remove();
 
 		return computedColor;
 	}
@@ -234,63 +278,56 @@ export class MarkerManager {
 		icon: string | null,
 		color: string,
 	): Promise<HTMLImageElement> {
-		// Resolve CSS variables to actual color values
 		const resolvedColor = this.resolveColor(color);
 		const resolvedIconColor = this.resolveColor("var(--bases-map-marker-icon-color)");
 
-		// Create a high-resolution canvas for crisp rendering on retina displays
-		const scale = 4; // 4x resolution for crisp display
-		const size = 48 * scale; // High-res canvas
+		const scale = 4;
+		const size = 48 * scale;
 		const canvas = document.createElement("canvas");
 		canvas.width = size;
 		canvas.height = size;
-		const ctx = canvas.getContext("2d");
+		const context = canvas.getContext("2d");
 
-		if (!ctx) {
+		if (!context) {
 			throw new Error("Failed to get canvas context");
 		}
 
-		// Enable high-quality rendering
-		ctx.imageSmoothingEnabled = true;
-		ctx.imageSmoothingQuality = "high";
+		context.imageSmoothingEnabled = true;
+		context.imageSmoothingQuality = "high";
 
-		// Draw the circle background (scaled up)
 		const centerX = size / 2;
 		const centerY = size / 2;
 		const radius = 12 * scale;
 
-		ctx.fillStyle = resolvedColor;
-		ctx.beginPath();
-		ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-		ctx.fill();
+		context.fillStyle = resolvedColor;
+		context.beginPath();
+		context.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+		context.fill();
 
-		ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
-		ctx.lineWidth = 1 * scale;
-		ctx.stroke();
+		context.strokeStyle = "rgba(255, 255, 255, 0.3)";
+		context.lineWidth = 1 * scale;
+		context.stroke();
 
-		// Draw the icon or dot
 		if (icon) {
-			// Load and draw custom icon
 			const iconDiv = createDiv();
 			setIcon(iconDiv, icon);
-			const svgEl = iconDiv.querySelector("svg");
+			const svgElement = iconDiv.querySelector("svg");
 
-			if (svgEl) {
-				svgEl.setAttribute("stroke", "currentColor");
-				svgEl.setAttribute("fill", "none");
-				svgEl.setAttribute("stroke-width", "2");
-				svgEl.style.color = resolvedIconColor;
+			if (svgElement) {
+				svgElement.setAttribute("stroke", "currentColor");
+				svgElement.setAttribute("fill", "none");
+				svgElement.setAttribute("stroke-width", "2");
+				svgElement.style.color = resolvedIconColor;
 
-				const svgString = new XMLSerializer().serializeToString(svgEl);
-				const iconImg = new Image();
-				iconImg.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgString);
+				const svgString = new XMLSerializer().serializeToString(svgElement);
+				const iconImage = new Image();
+				iconImage.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgString);
 
 				await new Promise<void>((resolve, reject) => {
-					iconImg.onload = () => {
-						// Draw icon centered and scaled
+					iconImage.onload = () => {
 						const iconSize = radius * 1.2;
-						ctx.drawImage(
-							iconImg,
+						context.drawImage(
+							iconImage,
 							centerX - iconSize / 2,
 							centerY - iconSize / 2,
 							iconSize,
@@ -298,19 +335,15 @@ export class MarkerManager {
 						);
 						resolve();
 					};
-					iconImg.onerror = reject;
+					iconImage.onerror = reject;
 				});
+			} else {
+				this.drawMarkerDot(context, centerX, centerY, scale, resolvedIconColor);
 			}
 		} else {
-			// Draw a dot
-			const dotRadius = 4 * scale;
-			ctx.fillStyle = resolvedIconColor;
-			ctx.beginPath();
-			ctx.arc(centerX, centerY, dotRadius, 0, 2 * Math.PI);
-			ctx.fill();
+			this.drawMarkerDot(context, centerX, centerY, scale, resolvedIconColor);
 		}
 
-		// Convert canvas to image
 		return new Promise((resolve, reject) => {
 			canvas.toBlob((blob) => {
 				if (!blob) {
@@ -318,17 +351,31 @@ export class MarkerManager {
 					return;
 				}
 
-				const img = new Image();
-				img.onload = () => resolve(img);
-				img.onerror = reject;
-				img.src = URL.createObjectURL(blob);
+				const image = new Image();
+				image.onload = () => resolve(image);
+				image.onerror = reject;
+				image.src = URL.createObjectURL(blob);
 			});
 		});
 	}
 
+	private drawMarkerDot(
+		context: CanvasRenderingContext2D,
+		centerX: number,
+		centerY: number,
+		scale: number,
+		color: string,
+	): void {
+		const dotRadius = 4 * scale;
+		context.fillStyle = color;
+		context.beginPath();
+		context.arc(centerX, centerY, dotRadius, 0, 2 * Math.PI);
+		context.fill();
+	}
+
 	private createGeoJSONFeatures(markers: MapMarker[]): GeoJSON.Feature[] {
 		return markers.map((markerData, index) => {
-			const [lat, lng] = markerData.coordinates;
+			const [latitude, longitude] = markerData.coordinates;
 			const icon = this.getCustomIcon(markerData.entry);
 			const color =
 				this.getCustomColor(markerData.entry) || "var(--bases-map-marker-background)";
@@ -336,26 +383,28 @@ export class MarkerManager {
 
 			const properties: MapMarkerProperties = {
 				entryIndex: index,
-				icon: compositeKey, // Use composite image key
+				icon: compositeKey,
+				label: markerData.entry.file.basename,
 			};
 
 			return {
 				type: "Feature",
 				geometry: {
 					type: "Point",
-					coordinates: [lng, lat],
+					coordinates: [longitude, latitude],
 				},
 				properties,
 			};
 		});
 	}
 
-	private addMarkerLayers(): void {
-		if (!this.map) return;
+	private addPinLayer(): void {
+		if (!this.map || this.map.getLayer(MARKER_PIN_LAYER_ID)) {
+			return;
+		}
 
-		// Add a single symbol layer for composite marker images
 		this.map.addLayer({
-			id: "marker-pins",
+			id: MARKER_PIN_LAYER_ID,
 			type: "symbol",
 			source: "markers",
 			layout: {
@@ -365,11 +414,11 @@ export class MarkerManager {
 					["linear"],
 					["zoom"],
 					0,
-					0.12, // Very small
+					0.12,
 					4,
 					0.18,
 					14,
-					0.22, // Normal size
+					0.22,
 					18,
 					0.24,
 				],
@@ -380,83 +429,130 @@ export class MarkerManager {
 		});
 	}
 
+	private navigateToMarker(coordinates: [number, number]): void {
+		if (!this.map) return;
+
+		const [latitude, longitude] = coordinates;
+		const currentZoom = this.map.getZoom();
+		const targetZoom = Math.min(
+			Math.max(currentZoom, MARKER_CLICK_ZOOM),
+			this.map.getMaxZoom(),
+		);
+		const markerPoint = this.map.project([longitude, latitude]);
+		const centerPoint = this.map.project(this.map.getCenter());
+		const distanceFromCenterInPx = Math.hypot(
+			markerPoint.x - centerPoint.x,
+			markerPoint.y - centerPoint.y,
+		);
+		const hasReachedClickTarget =
+			distanceFromCenterInPx <= MARKER_CLICK_MIN_DISTANCE_IN_PX && currentZoom >= targetZoom;
+
+		if (hasReachedClickTarget) {
+			return;
+		}
+
+		this.map.flyTo({
+			center: [longitude, latitude],
+			zoom: targetZoom,
+			speed: MARKER_FLY_SPEED,
+			curve: MARKER_FLY_CURVE,
+			easing: (animationProgress) =>
+				animationProgress === 1
+					? 1
+					: 1 - Math.pow(2, -MARKER_FLY_EXPONENT * animationProgress),
+			essential: true,
+		});
+	}
+
+	private handleMarkerSelection(event: MapLayerMouseEvent): void {
+		if (!event.features || event.features.length === 0) return;
+
+		const [maybeFeature] = event.features;
+		const entryIndex = maybeFeature?.properties?.entryIndex;
+		if (entryIndex === undefined) {
+			return;
+		}
+
+		const maybeMarkerData = this.markers.at(entryIndex);
+		if (!maybeMarkerData) {
+			return;
+		}
+
+		this.navigateToMarker(maybeMarkerData.coordinates);
+		this.showMarkerPopup(maybeMarkerData, true);
+	}
+
+	private showMarkerPopup(markerData: MapMarker, isPinned: boolean): void {
+		const data = this.getData();
+		const mapConfig = this.getMapConfig();
+		if (!data || !data.properties || !mapConfig) {
+			return;
+		}
+
+		this.popupManager.showPopup(
+			markerData.entry,
+			markerData.coordinates,
+			data.properties,
+			mapConfig.coordinatesProp,
+			mapConfig.markerIconProp,
+			mapConfig.markerColorProp,
+			this.getDisplayName,
+			isPinned,
+		);
+	}
+
 	private setupMarkerInteractions(): void {
 		if (!this.map) return;
 
-		// Change cursor on hover
-		this.map.on("mouseenter", "marker-pins", () => {
+		this.map.on("mouseenter", MARKER_PIN_LAYER_ID, () => {
 			if (this.map) this.map.getCanvas().style.cursor = "pointer";
 		});
 
-		this.map.on("mouseleave", "marker-pins", () => {
+		this.map.on("mouseleave", MARKER_PIN_LAYER_ID, () => {
 			if (this.map) this.map.getCanvas().style.cursor = "";
 		});
 
-		// Handle hover to show popup
-		this.map.on("mouseenter", "marker-pins", (e: MapLayerMouseEvent) => {
-			if (!e.features || e.features.length === 0) return;
-			const feature = e.features[0];
-			const entryIndex = feature.properties?.entryIndex;
-			if (entryIndex !== undefined && this.markers[entryIndex]) {
-				const markerData = this.markers[entryIndex];
-				const data = this.getData();
-				const mapConfig = this.getMapConfig();
-				if (data && data.properties && mapConfig) {
-					this.popupManager.showPopup(
-						markerData.entry,
-						markerData.coordinates,
-						data.properties,
-						mapConfig.coordinatesProp,
-						mapConfig.markerIconProp,
-						mapConfig.markerColorProp,
-						this.getDisplayName,
-					);
+		this.map.on("click", MARKER_PIN_LAYER_ID, (event: MapLayerMouseEvent) => {
+			this.handleMarkerSelection(event);
+		});
+
+		this.map.on("mouseenter", MARKER_PIN_LAYER_ID, (event: MapLayerMouseEvent) => {
+			if (!event.features || event.features.length === 0) return;
+			const [maybeFeature] = event.features;
+			const entryIndex = maybeFeature?.properties?.entryIndex;
+			if (entryIndex !== undefined) {
+				const maybeMarkerData = this.markers.at(entryIndex);
+				if (maybeMarkerData) {
+					this.showMarkerPopup(maybeMarkerData, false);
 				}
 			}
 		});
 
-		// Handle mouseleave to hide popup
-		this.map.on("mouseleave", "marker-pins", () => {
+		this.map.on("mouseleave", MARKER_PIN_LAYER_ID, () => {
 			this.popupManager.hidePopup();
 		});
 
-		// Handle click to open file
-		this.map.on("click", "marker-pins", (e: MapLayerMouseEvent) => {
-			if (!e.features || e.features.length === 0) return;
-			const feature = e.features[0];
+		this.map.on("contextmenu", MARKER_PIN_LAYER_ID, (event: MapLayerMouseEvent) => {
+			event.preventDefault();
+			if (!event.features || event.features.length === 0) return;
+
+			const feature = event.features[0];
 			const entryIndex = feature.properties?.entryIndex;
 			if (entryIndex !== undefined && this.markers[entryIndex]) {
 				const markerData = this.markers[entryIndex];
-				const newLeaf = e.originalEvent
-					? Boolean(Keymap.isModEvent(e.originalEvent))
-					: false;
-				this.onOpenFile(markerData.entry.file.path, newLeaf);
-			}
-		});
-
-		// Handle right-click context menu
-		this.map.on("contextmenu", "marker-pins", (e: MapLayerMouseEvent) => {
-			e.preventDefault();
-			if (!e.features || e.features.length === 0) return;
-
-			const feature = e.features[0];
-			const entryIndex = feature.properties?.entryIndex;
-			if (entryIndex !== undefined && this.markers[entryIndex]) {
-				const markerData = this.markers[entryIndex];
-				const [lat, lng] = markerData.coordinates;
+				const [latitude, longitude] = markerData.coordinates;
 				const file = markerData.entry.file;
 
-				const menu = Menu.forEvent(e.originalEvent);
+				const menu = Menu.forEvent(event.originalEvent);
 				this.app.workspace.handleLinkContextMenu(menu, file.path, "");
 
-				// Add copy coordinates option
 				menu.addItem((item) =>
 					item
 						.setSection("action")
 						.setTitle("Copy coordinates")
 						.setIcon("map-pin")
 						.onClick(() => {
-							const coordString = `${lat}, ${lng}`;
+							const coordString = `${latitude}, ${longitude}`;
 							void navigator.clipboard.writeText(coordString);
 						}),
 				);
@@ -472,15 +568,14 @@ export class MarkerManager {
 			}
 		});
 
-		// Handle hover for link preview - similar to cards view
-		this.map.on("mouseover", "marker-pins", (e: MapLayerMouseEvent) => {
-			if (!e.features || e.features.length === 0) return;
-			const feature = e.features[0];
+		this.map.on("mouseover", MARKER_PIN_LAYER_ID, (event: MapLayerMouseEvent) => {
+			if (!event.features || event.features.length === 0) return;
+			const feature = event.features[0];
 			const entryIndex = feature.properties?.entryIndex;
 			if (entryIndex !== undefined && this.markers[entryIndex]) {
 				const markerData = this.markers[entryIndex];
 				this.app.workspace.trigger("hover-link", {
-					event: e.originalEvent,
+					event: event.originalEvent,
 					source: "bases",
 					hoverParent: this.app.renderContext,
 					targetEl: this.mapEl,
@@ -488,5 +583,9 @@ export class MarkerManager {
 				});
 			}
 		});
+	}
+
+	destroy(): void {
+		this.labelOverlay.destroy();
 	}
 }

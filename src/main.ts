@@ -1,6 +1,7 @@
-import { Plugin } from "obsidian";
+import { Plugin, Workspace } from "obsidian";
 import { MapView } from "./map-view";
 import { MapSettings, DEFAULT_SETTINGS, MapSettingTab } from "./settings";
+import { MAPX_SETTINGS_CHANGED_EVENT, notifyMapViews } from "./plugin-settings";
 
 export default class ObsidianMapsPlugin extends Plugin {
 	settings: MapSettings;
@@ -19,12 +20,39 @@ export default class ObsidianMapsPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const savedData = ((await this.loadData()) ?? {}) as Partial<MapSettings>;
+		this.settings = {
+			...DEFAULT_SETTINGS,
+			...savedData,
+			showMarkerLabels: savedData.showMarkerLabels ?? savedData.showTextLabels ?? false,
+			textLabels: {
+				...DEFAULT_SETTINGS.textLabels,
+				...savedData.textLabels,
+			},
+			mapLayers: {
+				...DEFAULT_SETTINGS.mapLayers,
+				...savedData.mapLayers,
+			},
+		};
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
 
-	onunload() {}
+	notifySettingsChanged(): void {
+		const settingsSnapshot: MapSettings = {
+			...DEFAULT_SETTINGS,
+			...this.settings,
+			showMarkerLabels: this.settings.showMarkerLabels,
+		};
+
+		(
+			this.app.workspace as Workspace & {
+				trigger(name: typeof MAPX_SETTINGS_CHANGED_EVENT, settings: MapSettings): void;
+			}
+		).trigger(MAPX_SETTINGS_CHANGED_EVENT, settingsSnapshot);
+
+		notifyMapViews(settingsSnapshot);
+	}
 }

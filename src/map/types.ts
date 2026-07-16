@@ -7,5 +7,6 @@ export interface MapMarker {
 
 export interface MapMarkerProperties {
 	entryIndex: number;
-	icon: string; // Composite image key combining icon and color
+	icon: string;
+	label: string;
 }

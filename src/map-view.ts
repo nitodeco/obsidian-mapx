@@ -8,9 +8,19 @@ import {
 	StringValue,
 	NullValue,
 	BasesAllOptions,
+	Workspace,
+	EventRef,
 } from "obsidian";
 import { LngLatLike, Map, setRTLTextPlugin } from "maplibre-gl";
 import type ObsidianMapsPlugin from "./main";
+import type { MapSettings } from "./settings";
+import {
+	MAPX_SETTINGS_CHANGED_EVENT,
+	buildMapStyleKey,
+	registerMapView,
+	resolveMapSettings,
+	unregisterMapView,
+} from "./plugin-settings";
 import { DEFAULT_MAP_HEIGHT, DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM } from "./map/constants";
 import { CustomZoomControl } from "./map/controls/zoom-control";
 import { BackgroundSwitcherControl } from "./map/controls/background-switcher";
@@ -55,6 +65,9 @@ export class MapView extends BasesView {
 	private styleManager: StyleManager;
 	private popupManager: PopupManager;
 	private markerManager: MarkerManager;
+	private appliedStyleKey = "";
+	private pluginSettingsListenerRegistered = false;
+	private pendingPluginSettings: MapSettings | null = null;
 
 	// Static flag to track RTL plugin initialization
 	private static rtlPluginInitialized = false;
@@ -74,22 +87,85 @@ export class MapView extends BasesView {
 		this.popupManager = new PopupManager(this.containerEl, this.app);
 		this.markerManager = new MarkerManager(
 			this.app,
+			this.containerEl,
 			this.mapEl,
 			this.popupManager,
-			(path, newLeaf) => void this.app.workspace.openLinkText(path, "", newLeaf),
 			() => this.data,
 			() => this.mapConfig,
 			(prop) => this.config.getDisplayName(prop),
 		);
-	}
 
-	onload(): void {
-		// Listen for theme changes to update map tiles
-		this.registerEvent(this.app.workspace.on("css-change", this.onThemeChange, this));
+		this.load();
 	}
 
 	onunload() {
 		this.destroyMap();
+	}
+
+	private ensurePluginSettingsListeners(): void {
+		if (this.pluginSettingsListenerRegistered) {
+			return;
+		}
+
+		this.pluginSettingsListenerRegistered = true;
+		registerMapView(this);
+		this.register(() => unregisterMapView(this));
+		this.registerEvent(
+			(
+				this.app.workspace as Workspace & {
+					on(
+						name: typeof MAPX_SETTINGS_CHANGED_EVENT,
+						callback: (settings: MapSettings) => void,
+					): EventRef;
+				}
+			).on(MAPX_SETTINGS_CHANGED_EVENT, (settings: MapSettings) => {
+				this.applyPluginSettings(settings);
+			}),
+		);
+		this.registerEvent(this.app.workspace.on("css-change", this.onThemeChange, this));
+	}
+
+	applyPluginSettings(settings?: MapSettings): void {
+		const pluginSettings = settings ?? resolveMapSettings(this.plugin);
+
+		this.markerManager.setShowTextLabels(pluginSettings.showMarkerLabels);
+
+		if (!this.map || !this.mapConfig) {
+			this.pendingPluginSettings = pluginSettings;
+			return;
+		}
+
+		this.pendingPluginSettings = null;
+
+		const currentTileSetId = this.mapConfig.currentTileSetId;
+		this.mapConfig = this.loadConfig(currentTileSetId);
+
+		const resolvedIsDark = this.styleManager.resolveIsDarkMode(pluginSettings.mapTheme);
+		const nextStyleKey = buildMapStyleKey(
+			this.mapConfig.mapTiles,
+			this.mapConfig.mapTilesDark,
+			resolvedIsDark,
+			pluginSettings,
+		);
+
+		if (nextStyleKey !== this.appliedStyleKey) {
+			this.appliedStyleKey = nextStyleKey;
+			void this.updateMapStyle(pluginSettings);
+		}
+	}
+
+	private getPluginSettings(): MapSettings {
+		return resolveMapSettings(this.plugin);
+	}
+
+	private applyPendingPluginSettings(): void {
+		if (!this.pendingPluginSettings || !this.map) {
+			return;
+		}
+
+		const pendingSettings = this.pendingPluginSettings;
+		this.pendingPluginSettings = null;
+		this.applyPluginSettings(pendingSettings);
 	}
 
 	/** Reduce flashing due to map re-rendering by debouncing while resizes are still ocurring. */
@@ -110,24 +186,64 @@ export class MapView extends BasesView {
 	}
 
 	private onThemeChange = (): void => {
-		if (this.map) {
-			void this.updateMapStyle();
+		const pluginSettings = resolveMapSettings(this.plugin);
+		if (pluginSettings.mapTheme !== "system" || !this.map || !this.mapConfig) {
+			return;
 		}
+
+		const resolvedIsDark = this.styleManager.resolveIsDarkMode("system");
+		const nextStyleKey = buildMapStyleKey(
+			this.mapConfig.mapTiles,
+			this.mapConfig.mapTilesDark,
+			resolvedIsDark,
+			pluginSettings,
+		);
+
+		if (nextStyleKey === this.appliedStyleKey) {
+			return;
+		}
+
+		this.appliedStyleKey = nextStyleKey;
+		void this.updateMapStyle(pluginSettings);
 	};
 
-	private async updateMapStyle(): Promise<void> {
+	private async updateMapStyle(pluginSettings: MapSettings): Promise<void> {
 		if (!this.map || !this.mapConfig) return;
+
+		const center = this.map.getCenter();
+		const zoom = this.map.getZoom();
+		const bearing = this.map.getBearing();
+		const pitch = this.map.getPitch();
+
 		const newStyle = await this.styleManager.getMapStyle(
 			this.mapConfig.mapTiles,
 			this.mapConfig.mapTilesDark,
+			pluginSettings,
 		);
+
+		const restoreMapAfterStyleChange = () => {
+			if (!this.map) {
+				return;
+			}
+
+			this.map.jumpTo({ center, zoom, bearing, pitch });
+			void this.markerManager.updateMarkers(this.data);
+		};
+
+		let restored = false;
+		const restoreOnce = () => {
+			if (restored) {
+				return;
+			}
+			restored = true;
+			restoreMapAfterStyleChange();
+		};
+
+		this.map.once("style.load", restoreOnce);
+		this.map.once("idle", restoreOnce);
+
 		this.map.setStyle(newStyle);
 		this.markerManager.clearLoadedIcons();
-
-		// Re-add markers after style change since setStyle removes all runtime layers
-		this.map.once("styledata", () => {
-			void this.markerManager.updateMarkers(this.data);
-		});
 	}
 
 	private async switchToTileSet(tileSetId: string): Promise<void> {
@@ -136,16 +252,18 @@ export class MapView extends BasesView {
 
 		this.mapConfig.currentTileSetId = tileSetId;
 
-		// Update the current tiles
 		this.mapConfig.mapTiles = tileSet.lightTiles ? [tileSet.lightTiles] : [];
-		this.mapConfig.mapTilesDark = tileSet.darkTiles
-			? [tileSet.darkTiles]
-			: tileSet.lightTiles
-				? [tileSet.lightTiles]
-				: [];
+		this.mapConfig.mapTilesDark = tileSet.darkTiles ? [tileSet.darkTiles] : [];
 
-		// Update the map style
-		await this.updateMapStyle();
+		const pluginSettings = this.getPluginSettings();
+		const resolvedIsDark = this.styleManager.resolveIsDarkMode(pluginSettings.mapTheme);
+		this.appliedStyleKey = buildMapStyleKey(
+			this.mapConfig.mapTiles,
+			this.mapConfig.mapTilesDark,
+			resolvedIsDark,
+			pluginSettings,
+		);
+		await this.updateMapStyle(pluginSettings);
 	}
 
 	private async initializeMap(): Promise<void> {
@@ -180,10 +298,22 @@ export class MapView extends BasesView {
 		}
 
 		// Get the map style (may involve fetching remote style JSON)
+		const pluginSettings = this.getPluginSettings();
+		const resolvedIsDark = this.styleManager.resolveIsDarkMode(pluginSettings.mapTheme);
 		const mapStyle = await this.styleManager.getMapStyle(
 			this.mapConfig.mapTiles,
 			this.mapConfig.mapTilesDark,
+			pluginSettings,
 		);
+
+		this.appliedStyleKey = buildMapStyleKey(
+			this.mapConfig.mapTiles,
+			this.mapConfig.mapTilesDark,
+			resolvedIsDark,
+			pluginSettings,
+		);
+
+		this.markerManager.setShowTextLabels(pluginSettings.showMarkerLabels);
 
 		// Determine initial position: prefer ephemeral state if available, otherwise use config
 		let initialCenter: [number, number] = [this.mapConfig.center[1], this.mapConfig.center[0]]; // MapLibre uses [lng, lat]
@@ -288,6 +418,7 @@ export class MapView extends BasesView {
 
 	private destroyMap(): void {
 		this.popupManager.destroy();
+		this.markerManager.destroy();
 		if (this.map) {
 			this.map.remove();
 			this.map = null;
@@ -296,6 +427,7 @@ export class MapView extends BasesView {
 	}
 
 	public onDataUpdated(): void {
+		this.ensurePluginSettingsListeners();
 		this.containerEl.removeClass("is-loading");
 
 		const configSnapshot = this.getConfigSnapshot();
@@ -348,6 +480,9 @@ export class MapView extends BasesView {
 			if (this.mapConfig) {
 				this.lastEvaluatedCenter = [this.mapConfig.center[0], this.mapConfig.center[1]];
 			}
+
+			this.applyPendingPluginSettings();
+			this.applyPluginSettings(resolveMapSettings(this.plugin));
 		});
 	}
 
@@ -428,14 +563,27 @@ export class MapView extends BasesView {
 
 		// Update map style if tiles configuration changed
 		if (this.isFirstLoad || tilesChanged) {
-			const newStyle = await this.styleManager.getMapStyle(
+			const pluginSettings = this.getPluginSettings();
+			const resolvedIsDark = this.styleManager.resolveIsDarkMode(pluginSettings.mapTheme);
+			const nextStyleKey = buildMapStyleKey(
 				this.mapConfig.mapTiles,
 				this.mapConfig.mapTilesDark,
+				resolvedIsDark,
+				pluginSettings,
 			);
-			const currentStyle = this.map.getStyle();
-			if (JSON.stringify(newStyle) !== JSON.stringify(currentStyle)) {
+
+			if (nextStyleKey !== this.appliedStyleKey) {
+				this.appliedStyleKey = nextStyleKey;
+				const newStyle = await this.styleManager.getMapStyle(
+					this.mapConfig.mapTiles,
+					this.mapConfig.mapTilesDark,
+					pluginSettings,
+				);
 				this.map.setStyle(newStyle);
 				this.markerManager.clearLoadedIcons();
+				this.map.once("style.load", () => {
+					void this.markerManager.updateMarkers(this.data);
+				});
 			}
 		}
 
@@ -511,11 +659,7 @@ export class MapView extends BasesView {
 
 			selectedTileSetId = selectedTileSet.id;
 			mapTiles = selectedTileSet.lightTiles ? [selectedTileSet.lightTiles] : [];
-			mapTilesDark = selectedTileSet.darkTiles
-				? [selectedTileSet.darkTiles]
-				: selectedTileSet.lightTiles
-					? [selectedTileSet.lightTiles]
-					: [];
+			mapTilesDark = selectedTileSet.darkTiles ? [selectedTileSet.darkTiles] : [];
 		} else {
 			// No tiles configured, will fall back to default style
 			mapTiles = [];

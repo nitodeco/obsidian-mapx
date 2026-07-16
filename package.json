@@ -15,6 +15,7 @@
 	"scripts": {
 		"dev": "node scripts/generate-rtl-plugin.mjs && rolldown -c --watch",
 		"build": "node scripts/generate-rtl-plugin.mjs && tsc -noEmit -skipLibCheck && NODE_ENV=production rolldown -c",
+		"link": "node scripts/link-vault.mjs",
 		"lint": "oxlint",
 		"lint:fix": "oxlint --fix",
 		"fmt": "oxfmt",

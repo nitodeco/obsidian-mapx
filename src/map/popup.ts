@@ -1,6 +1,8 @@
 import { App, BasesEntry, BasesPropertyId, ListValue, Value } from "obsidian";
 import { Popup, Map } from "maplibre-gl";
 
+const MAX_PREVIEW_LENGTH = 220;
+
 export class PopupManager {
 	private map: Map | null = null;
 	private sharedPopup: Popup | null = null;
@@ -8,6 +10,8 @@ export class PopupManager {
 	private popupHideTimeoutWin: Window | null = null;
 	private containerEl: HTMLElement;
 	private app: App;
+	private isPopupPinned = false;
+	private popupRequestId = 0;
 
 	constructor(containerEl: HTMLElement, app: App) {
 		this.containerEl = containerEl;
@@ -26,27 +30,14 @@ export class PopupManager {
 		markerIconProp: BasesPropertyId | null,
 		markerColorProp: BasesPropertyId | null,
 		getDisplayName: (prop: BasesPropertyId) => string,
+		isPinned = false,
 	): void {
 		if (!this.map) return;
 
-		// Only show popup if there are properties to display
-		if (
-			!properties ||
-			properties.length === 0 ||
-			!this.hasAnyPropertyValues(
-				entry,
-				properties,
-				coordinatesProp,
-				markerIconProp,
-				markerColorProp,
-			)
-		) {
-			return;
-		}
-
 		this.clearPopupHideTimeout();
+		this.isPopupPinned = isPinned;
+		const popupRequestId = ++this.popupRequestId;
 
-		// Create shared popup if it doesn't exist
 		if (!this.sharedPopup) {
 			const sharedPopup = (this.sharedPopup = new Popup({
 				closeButton: false,
@@ -54,7 +45,6 @@ export class PopupManager {
 				offset: 25,
 			}));
 
-			// Add hover handlers to the popup itself
 			sharedPopup.on("open", () => {
 				const popupEl = sharedPopup.getElement();
 				if (popupEl) {
@@ -68,7 +58,6 @@ export class PopupManager {
 			});
 		}
 
-		// Update popup content and position
 		const [lat, lng] = coordinates;
 		const popupContent = this.createPopupContent(
 			entry,
@@ -77,11 +66,16 @@ export class PopupManager {
 			markerIconProp,
 			markerColorProp,
 			getDisplayName,
+			popupRequestId,
 		);
 		this.sharedPopup.setDOMContent(popupContent).setLngLat([lng, lat]).addTo(this.map);
 	}
 
 	hidePopup(): void {
+		if (this.isPopupPinned) {
+			return;
+		}
+
 		this.clearPopupHideTimeout();
 
 		const win = (this.popupHideTimeoutWin = this.containerEl.win);
@@ -106,6 +100,7 @@ export class PopupManager {
 
 	destroy(): void {
 		this.clearPopupHideTimeout();
+		this.isPopupPinned = false;
 		if (this.sharedPopup) {
 			this.sharedPopup.remove();
 			this.sharedPopup = null;
@@ -119,16 +114,21 @@ export class PopupManager {
 		markerIconProp: BasesPropertyId | null,
 		markerColorProp: BasesPropertyId | null,
 		getDisplayName: (prop: BasesPropertyId) => string,
+		popupRequestId: number,
 	): HTMLElement {
 		const containerEl = createDiv("bases-map-popup");
 
-		// Get properties that have values
-		const propertiesSlice = properties.slice(0, 20); // Max 20 properties
+		const propertiesSlice = properties.slice(0, 20);
 		const propertiesWithValues = [];
 
 		for (const prop of propertiesSlice) {
-			if (prop === coordinatesProp || prop === markerIconProp || prop === markerColorProp)
-				continue; // Skip coordinates, marker icon, and marker color properties
+			if (
+				prop === coordinatesProp ||
+				prop === markerIconProp ||
+				prop === markerColorProp ||
+				this.isAddressProperty(prop, getDisplayName)
+			)
+				continue;
 
 			try {
 				const value = entry.getValue(prop);
@@ -140,22 +140,16 @@ export class PopupManager {
 			}
 		}
 
-		// Use first property as title (still acts as a link to the file)
+		const titleEl = containerEl.createDiv("bases-map-popup-title");
+		const titleLinkEl = titleEl.createEl("a", {
+			href: entry.file.path,
+			cls: "internal-link",
+		});
+
 		if (propertiesWithValues.length > 0) {
-			const firstProperty = propertiesWithValues[0];
-			const titleEl = containerEl.createDiv("bases-map-popup-title");
-
-			// Create a clickable link that opens the file
-			const titleLinkEl = titleEl.createEl("a", {
-				href: entry.file.path,
-				cls: "internal-link",
-			});
-
-			// Render the first property value inside the link
+			const [firstProperty, ...remainingProperties] = propertiesWithValues;
 			firstProperty.value.renderTo(titleLinkEl, this.app.renderContext);
 
-			// Show remaining properties (excluding the first one used as title)
-			const remainingProperties = propertiesWithValues.slice(1);
 			if (remainingProperties.length > 0) {
 				const propContainerEl = containerEl.createDiv("bases-map-popup-properties");
 				for (const { prop, value } of remainingProperties) {
@@ -166,9 +160,76 @@ export class PopupManager {
 					value.renderTo(valueEl, this.app.renderContext);
 				}
 			}
+		} else {
+			titleLinkEl.textContent = entry.file.basename;
 		}
 
+		const previewEl = containerEl.createDiv("bases-map-popup-preview");
+		void this.updatePopupPreview(previewEl, entry, popupRequestId);
+
+		const actionsEl = containerEl.createDiv("bases-map-popup-actions");
+		actionsEl
+			.createEl("button", {
+				cls: "mod-cta",
+				text: "Open",
+			})
+			.addEventListener("click", () => {
+				void this.app.workspace.openLinkText(entry.file.path, "", false);
+			});
+
 		return containerEl;
+	}
+
+	private isAddressProperty(
+		prop: BasesPropertyId,
+		getDisplayName: (prop: BasesPropertyId) => string,
+	): boolean {
+		const displayName = getDisplayName(prop).trim().toLowerCase();
+		const propertyName = prop.split(".").at(-1)?.trim().toLowerCase();
+
+		return displayName === "address" || propertyName === "address";
+	}
+
+	private async updatePopupPreview(
+		previewEl: HTMLElement,
+		entry: BasesEntry,
+		popupRequestId: number,
+	): Promise<void> {
+		try {
+			const fileText = await this.app.vault.cachedRead(entry.file);
+			if (this.popupRequestId !== popupRequestId) {
+				return;
+			}
+
+			const previewText = this.getPreviewText(fileText);
+			if (!previewText) {
+				previewEl.remove();
+				return;
+			}
+
+			previewEl.textContent = previewText;
+		} catch {
+			previewEl.remove();
+		}
+	}
+
+	private getPreviewText(fileText: string): string {
+		const previewText = fileText
+			.replace(/^---\s*[\s\S]*?\n---\s*/, "")
+			.replace(/```[\s\S]*?```/g, " ")
+			.replace(/!\[\[[^\]]+\]\]/g, " ")
+			.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
+			.replace(/\[\[([^\]]+)\]\]/g, "$1")
+			.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+			.replace(/[#*_`>~-]/g, "")
+			.replace(/\s+/g, " ")
+			.trim();
+
+		if (previewText.length <= MAX_PREVIEW_LENGTH) {
+			return previewText;
+		}
+
+		return `${previewText.slice(0, MAX_PREVIEW_LENGTH - 3).trimEnd()}...`;
 	}
 
 	private hasNonEmptyValue(value: Value): boolean {
@@ -186,31 +247,5 @@ export class PopupManager {
 		}
 
 		return true;
-	}
-
-	private hasAnyPropertyValues(
-		entry: BasesEntry,
-		properties: BasesPropertyId[],
-		coordinatesProp: BasesPropertyId | null,
-		markerIconProp: BasesPropertyId | null,
-		markerColorProp: BasesPropertyId | null,
-	): boolean {
-		const propertiesSlice = properties.slice(0, 20); // Max 20 properties
-
-		for (const prop of propertiesSlice) {
-			if (prop === coordinatesProp || prop === markerIconProp || prop === markerColorProp)
-				continue; // Skip coordinates, marker icon, and marker color properties
-
-			try {
-				const value = entry.getValue(prop);
-				if (value && this.hasNonEmptyValue(value)) {
-					return true;
-				}
-			} catch {
-				// Skip properties that can't be rendered
-			}
-		}
-
-		return false;
 	}
 }
